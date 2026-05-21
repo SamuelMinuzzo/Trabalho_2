@@ -23,7 +23,7 @@ Servidor TCP que escuta na porta **1234**. Para cada cliente conectado, cria um 
 - Manutenção e atualização da lista de usuários online
 
 ### `Client.java`
-Interface gráfica (Swing) que se conecta ao servidor. Possui uma thread dedicada (`ReceiverThread`) para receber mensagens em tempo real sem bloquear a interface. Suporta envio de mensagens públicas, privadas por comando e privadas por clique na lista de usuários.
+Interface gráfica (Swing) que se conecta ao servidor. Ao iniciar, exibe uma caixa de diálogo onde o usuário define seu nome e o endereço do servidor (localhost ou IP personalizado). Possui uma thread dedicada (`ReceiverThread`) para receber mensagens em tempo real sem bloquear a interface. Suporta envio de mensagens públicas, privadas por comando e privadas por clique na lista de usuários.
 
 ---
 
@@ -42,14 +42,14 @@ O projeto usa o pacote `chat`, então a compilação deve ser feita a partir do 
 
 A estrutura de pastas esperada é:
 ```
-Trabalho2/
+projeto/
 └── chat/
     ├── Server.java
     ├── Client.java
     └── Mensagem.java
 ```
 
-Dentro de `Trabalho2/`, execute:
+Dentro de `projeto/`, execute:
 
 ```bash
 javac chat/*.java
@@ -69,15 +69,13 @@ O servidor exibirá `SERVIDOR na porta 1234` e aguardará conexões.
 java chat.Client
 ```
 
-> **Atenção:** por padrão, o cliente tenta se conectar ao IP `192.168.1.50`. Para rodar localmente (mesmo computador), altere em `Client.java`:
-> ```java
-> // de:
-> socket = new Socket("192.168.1.50", 1234);
-> // para:
-> socket = new Socket("localhost", 1234);
-> ```
+Ao iniciar, uma caixa de diálogo será exibida com as seguintes opções:
 
-Abra quantas instâncias do cliente quiser — cada uma representa um usuário diferente.
+- **Nome:** escolha o nome de usuário que aparecerá no chat.
+- **Usar Localhost:** marcado por padrão. Conecta ao servidor rodando na mesma máquina.
+- **IP do Servidor:** habilitado ao desmarcar "Usar Localhost". Informe o IP da máquina onde o servidor está rodando (ex: `172.30.14.107`).
+
+Clicar em **Cancelar** ou fechar a janela encerra a aplicação. Abra quantas instâncias do cliente quiser — cada uma representa um usuário diferente.
 
 ---
 
