@@ -17,14 +17,31 @@ public class Server {
                 Socket socket = serverSocket.accept();
                 System.out.println("SERVIDOR: Novo cliente conectado de " + socket.getInetAddress());
 
-                ClientHandler cliente = new ClientHandler(socket);
-                clientes.add(cliente);
+				try {
+					ClientHandler cliente = new ClientHandler(socket);
 
-                // Atualiza a lista de usuários para todos e anuncia a entrada
-                cliente.atualizarUsuarios();
-                cliente.broadcast(new Mensagem("SERVIDOR", null, cliente.getNome() + " entrou no chat"));
+					clientes.add(cliente);
 
-                new Thread(cliente).start();
+					cliente.atualizarUsuarios();
+
+					cliente.broadcast(new Mensagem(
+							"SERVIDOR",
+							null,
+							cliente.getNome() + " entrou no chat"
+					));
+
+					new Thread(cliente).start();
+
+				} catch (IOException | ClassNotFoundException e) {
+
+					System.out.println("Conexão recusada: " + e.getMessage());
+
+					try {
+						socket.close();
+					} catch (IOException ex) {
+						ex.printStackTrace();
+					}
+				}
             }
 
         } catch (IOException e) {
@@ -34,6 +51,16 @@ public class Server {
         }
     }
 
+	//metodo para verificar se o nome ja existe e evitar o erro ce cadastrar por exemplo 2 Samuel
+	private static boolean nomeJaExiste(String nome) {
+		for (ClientHandler c : clientes) {
+			if (c.getNome() != null && c.getNome().equalsIgnoreCase(nome)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
     // -------------------------------------------------------------------------
     static class ClientHandler implements Runnable {
 
@@ -42,36 +69,46 @@ public class Server {
         private ObjectOutputStream out;
         private String nome;
 
-        public ClientHandler(Socket socket) {
-            try {
-                this.socket = socket;
+		public ClientHandler(Socket socket) throws IOException, ClassNotFoundException {
 
-                // Padrão obrigatório: ObjectOutputStream antes do ObjectInputStream
-                out = new ObjectOutputStream(socket.getOutputStream());
-                out.flush();
-                in  = new ObjectInputStream(socket.getInputStream());
+			this.socket = socket;
 
-                nome = (String) in.readObject();
-                System.out.println("SERVIDOR: Cliente identificado como '" + nome + "'");
+			// Padrão obrigatório
+			out = new ObjectOutputStream(socket.getOutputStream());
+			out.flush();
 
-           
-            } catch (EOFException | SocketException e) {
-                // Captura especificamente as exceções de desconexão (fechar a janela)
-                System.out.println("SERVIDOR: O cliente '" + nome + "' fechou o chat.");
-            } catch (IOException | ClassNotFoundException e) {
-                // Captura outros erros inesperados
-                System.out.println("Erro: Ocorreu uma exceção ao ler mensagem de '" + nome + "' - " + e.getMessage());
-            } finally {
-                System.out.println("SERVIDOR: Handler criado para '" + nome + "'");
-            }
-            
-        }
+			in = new ObjectInputStream(socket.getInputStream());
+
+			nome = ((String) in.readObject()).trim();
+
+			// Nome vazio
+			if (nome.isEmpty()) {
+				throw new IOException("Nome inválido");
+			}
+
+			// Verifica duplicado
+			if (Server.nomeJaExiste(nome)) {
+
+				out.writeObject(new Mensagem(
+						"SERVIDOR",
+						nome,
+						"Nome já está em uso. Escolha outro."
+				));
+				out.flush();
+
+				socket.close();
+
+				throw new IOException("Nome duplicado");
+			}
+
+			System.out.println("SERVIDOR: Cliente identificado como '" + nome + "'");
+		}
 
         public String getNome() { return nome; }
 
         @Override
         public void run() {
-            while (socket.isConnected()) {
+			while (!socket.isClosed()) {
                 try {
                     Object obj = in.readObject();
 
@@ -98,7 +135,7 @@ public class Server {
                     fecharConexao();
                     break;
                 } finally {
-                    
+
                 }
             }
         }

@@ -117,6 +117,31 @@ public class Client extends JFrame {
         setVisible(true);
     }
 
+    private void reconectarComNovoNome() {
+
+        SwingUtilities.invokeLater(() -> {
+
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Este nome já está em uso.\nEscolha outro nome.",
+                    "Nome duplicado",
+                    JOptionPane.ERROR_MESSAGE
+            );
+
+            try {
+                if (socket != null && !socket.isClosed()) {
+                    socket.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            dispose();
+
+            new Client();
+        });
+    }
+
     // ── Conexão ao servidor ────────────────────────────────────────────────────
     private void conectar() {
         try {
@@ -290,8 +315,15 @@ public class Client extends JFrame {
                         }
 
                     } else if (obj instanceof Mensagem) {
+
                         Mensagem msg = (Mensagem) obj;
-                        // Formato obrigatório: [Data e Hora] <Remetente> -> <Destinatário>: Mensagem
+
+                        // Nome duplicado
+                        if (msg.getRemetente().equals("SERVIDOR") && msg.getConteudo().contains("Nome já está em uso")) {
+                            client.reconectarComNovoNome();
+                            break;
+                        }
+
                         SwingUtilities.invokeLater(() ->
                                 areaChat.append(msg + "\n")
                         );
