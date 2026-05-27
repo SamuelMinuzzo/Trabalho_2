@@ -1,0 +1,544 @@
+\documentclass[10pt,twocolumn,a4paper]{article}
+
+% Pacotes
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+% Configuração do listings para Java
+\lstdefinestyle{javastyle}{
+    language=Java,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{gray}\itshape,
+    stringstyle=\color{orange},
+    numberstyle=\tiny\color{gray},
+    numbers=left,
+    stepnumber=1,
+    numbersep=5pt,
+    backgroundcolor=\color{gray!8},
+    frame=single,
+    rulecolor=\color{gray!40},
+    breaklines=true,
+    breakatwhitespace=false,
+    captionpos=b,
+    tabsize=4,
+    showstringspaces=false,
+    xleftmargin=8pt,
+    xrightmargin=4pt,
+}
+\lstset{style=javastyle}
+
+% Margens
+\geometry{left=2cm, right=2cm, top=2cm, bottom=2cm}
+\setlength{\columnsep}{0.7cm}
+
+% Título
+\title{\textbf{Implementação de um chat por protocolo TCP}\\
+\large Sistemas Distribuídos / Programação Paralela -- UTFPR}
+
+\author{
+    Edilson Daniel de Souza \\
+    \texttt{edilsonsouza@alunos.utfpr.edu.br}
+    \and
+    Samuel Minuzzo Pereira \\
+    \texttt{samuelpereira@alunos.utfpr.edu.br}
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+% Resumo
+\begin{abstract}
+Este trabalho apresenta a implementação de um sistema de chat em tempo real
+utilizando o protocolo de comunicação TCP em Java. A aplicação é composta por
+um servidor centralizado e múltiplos clientes com interface gráfica, permitindo
+troca de mensagens públicas e privadas entre usuários conectados
+simultaneamente. A arquitetura adota \textit{threads} para o tratamento
+concorrente de conexões no servidor e para a recepção assíncrona de mensagens
+no cliente, garantindo responsividade e estabilidade da aplicação.
+\end{abstract}
+
+\textbf{Palavras-chave:} Programação Paralela, Threads, TCP, Comunicação.
+
+% ------------------------------------------------
+
+\section{Introdução}
+A comunicação em rede é um dos pilares da computação moderna. Protocolos como
+o TCP (\textit{Transmission Control Protocol}) garantem entrega confiável e
+ordenada de dados entre processos distribuídos, sendo amplamente utilizados em
+aplicações onde a entrega da mensagem é indispensável.
+
+Este trabalho tem como motivação a aplicação prática dos conceitos de
+programação paralela e distribuída, explorando o uso de \textit{sockets} TCP e
+\textit{threads} para construir um sistema funcional de chat multiusuário em
+Java.
+
+O objetivo principal é desenvolver uma aplicação cliente-servidor que permita:
+\begin{itemize}
+    \item Comunicação simultânea entre múltiplos usuários;
+    \item Troca de mensagens públicas (\textit{broadcast}) e privadas;
+    \item Interface gráfica intuitiva com lista de usuários online;
+    \item Identificação dos usuários e registro de data/hora nas mensagens.
+\end{itemize}
+
+% ------------------------------------------------
+
+\section{Descrição do Problema}
+O problema consiste em implementar um sistema de chat baseado no modelo
+cliente-servidor utilizando \textit{sockets} TCP. O servidor deve aceitar
+conexões de múltiplos clientes de forma concorrente, receber mensagens e
+encaminhá-las ao(s) destinatário(s) correto(s).
+
+\textbf{Entrada:} mensagens de texto digitadas pelo usuário, podendo ser
+direcionadas a todos os participantes ou a um usuário específico.
+
+\textbf{Saída:} exibição das mensagens recebidas na interface gráfica de cada
+cliente, formatadas com remetente, destinatário e carimbo de data/hora.
+
+\textbf{Restrições:}
+\begin{itemize}
+    \item Uso exclusivo de sockets TCP para comunicação;
+    \item Objetos serializáveis para tráfego de mensagens;
+    \item Tratamento adequado de desconexões e exceções.
+\end{itemize}
+
+% ------------------------------------------------
+
+\section{Implementações}
+O sistema é composto por três classes principais: \texttt{Server},
+\texttt{Client} e \texttt{Mensagem}, todas pertencentes ao pacote \texttt{chat}.
+
+% ---
+\subsection{Classe \texttt{Mensagem}}
+
+A classe \texttt{Mensagem} implementa \texttt{Serializable}, permitindo que
+objetos sejam transmitidos diretamente pelos \textit{streams} de objetos do
+Java. Ela encapsula os campos \texttt{remetente}, \texttt{destinatario},
+\texttt{conteudo} e \texttt{horario} (do tipo \texttt{LocalDateTime}).
+
+A convenção adotada é: quando \texttt{destinatario == null}, a mensagem é
+tratada como \textit{broadcast}; caso contrário, é uma mensagem privada.
+
+O método \texttt{toString()} formata a saída no padrão exigido:
+
+\begin{lstlisting}[caption={toString() da classe Mensagem}]
+@Override
+public String toString() {
+    String destino = (destinatario == null)
+        ? "Todos" : destinatario;
+    return "[" + horario.format(FORMATTER) + "] "
+        + remetente + " -> " + destino
+        + ": " + conteudo;
+}
+\end{lstlisting}
+
+O formatador utiliza o padrão \texttt{dd/MM/yyyy HH:mm:ss}, garantindo que
+cada mensagem exibida traga o instante exato de criação.
+
+% ---
+\subsection{Classe \texttt{Server}}
+
+O servidor é iniciado com um \texttt{ServerSocket} na porta 1234 e entra em
+laço infinito aguardando conexões via \texttt{accept()}. Para cada cliente
+aceito, é criado um \texttt{ClientHandler} — que implementa \texttt{Runnable}
+— iniciado em uma \textit{thread} separada.
+
+A lista de clientes conectados é mantida em uma
+\texttt{CopyOnWriteArrayList<ClientHandler>}, garantindo segurança em ambientes
+concorrentes sem necessidade de sincronização explícita.
+
+\subsubsection{Construtor do \texttt{ClientHandler}}
+
+O construtor do \texttt{ClientHandler} é responsável por todo o
+\textit{handshake} inicial: cria os \textit{streams}, lê o nome enviado pelo
+cliente e rejeita a conexão caso o nome seja vazio ou já esteja em uso.
+
+\begin{lstlisting}[caption={Handshake no ClientHandler}]
+public ClientHandler(Socket socket)
+        throws IOException, ClassNotFoundException {
+    this.socket = socket;
+    out = new ObjectOutputStream(
+        socket.getOutputStream());
+    out.flush(); // envia cabecalho antes de ler
+    in  = new ObjectInputStream(
+        socket.getInputStream());
+    nome = ((String) in.readObject()).trim();
+    if (nome.isEmpty())
+        throw new IOException("Nome invalido");
+    if (Server.nomeJaExiste(nome)) {
+        out.writeObject(new Mensagem("SERVIDOR",
+            nome, "Nome ja esta em uso."));
+        out.flush();
+        socket.close();
+        throw new IOException("Nome duplicado");
+    }
+}
+\end{lstlisting}
+
+O \texttt{ObjectOutputStream} é criado e descarregado antes do
+\texttt{ObjectInputStream} para evitar \textit{deadlock} durante o
+\textit{handshake} (ver Seção~\ref{sec:dificuldades}).
+
+\subsubsection{Broadcast e mensagem privada}
+
+\begin{lstlisting}[caption={Broadcast e envio privado}]
+public void broadcast(Mensagem msg) {
+    for (ClientHandler c : clientes)
+        enviar(c, msg);
+}
+
+private void enviarPrivado(Mensagem msg) {
+    boolean encontrado = false;
+    for (ClientHandler c : clientes) {
+        if (c.nome.equals(msg.getDestinatario())
+         || c.nome.equals(msg.getRemetente())) {
+            enviar(c, msg);
+            encontrado = true;
+        }
+    }
+    if (!encontrado)
+        enviar(this, new Mensagem("SERVIDOR", nome,
+            "Usuario '" + msg.getDestinatario()
+            + "' nao encontrado."));
+}
+\end{lstlisting}
+
+O método \texttt{enviarPrivado} entrega a mensagem tanto ao destinatário quanto
+ao próprio remetente — garantindo que este veja a mensagem enviada na própria
+janela — e notifica o remetente caso o destinatário não esteja conectado.
+
+\subsubsection{Atualização da lista online}
+
+Sempre que um cliente entra ou sai do chat, o método
+\texttt{atualizarUsuarios()} transmite a todos uma \texttt{String} no formato
+\texttt{ONLINE:usuario1,usuario2,...}, que o lado cliente usa para atualizar o
+painel lateral.
+
+\begin{lstlisting}[caption={Envio da lista de usuários online}]
+public void atualizarUsuarios() {
+    StringBuilder sb = new StringBuilder();
+    for (ClientHandler c : clientes)
+        sb.append(c.nome).append(",");
+    String lista = "ONLINE:" + sb;
+    for (ClientHandler c : clientes)
+        enviar(c, lista);
+}
+\end{lstlisting}
+
+% ---
+\subsection{Classe \texttt{Client} e Interface Gráfica}
+
+O cliente possui interface gráfica construída com Swing. Ao iniciar, uma caixa
+de diálogo solicita o nome do usuário e permite configurar o endereço do
+servidor — localhost ou IP personalizado —, eliminando a necessidade de editar
+o código-fonte para conexões em rede local.
+
+\subsubsection{Estrutura da janela principal}
+
+A janela principal é organizada em três regiões com \texttt{BorderLayout}:
+
+\begin{itemize}
+    \item \textbf{Painel esquerdo (\texttt{WEST}):} \texttt{JList} de usuários
+          online com seleção por clique e botão ``Todos'' para retornar ao
+          \textit{broadcast};
+    \item \textbf{Centro (\texttt{CENTER}):} \texttt{JTextArea} somente leitura
+          envolto em \texttt{JScrollPane} para exibição do histórico de
+          mensagens;
+    \item \textbf{Rodapé (\texttt{SOUTH}):} \texttt{JLabel} com o destinatário
+          atual, \texttt{JTextField} de digitação e \texttt{JButton} de envio.
+\end{itemize}
+
+\begin{lstlisting}[caption={Montagem do painel inferior (rodapé)}]
+JPanel painelInferior =
+    new JPanel(new BorderLayout());
+labelDestinatario = new JLabel("  Para: Todos  ");
+campoMensagem     = new JTextField();
+botaoEnviar       = new JButton("Enviar");
+painelInferior.add(
+    labelDestinatario, BorderLayout.WEST);
+painelInferior.add(
+    campoMensagem,     BorderLayout.CENTER);
+painelInferior.add(
+    botaoEnviar,       BorderLayout.EAST);
+add(painelInferior, BorderLayout.SOUTH);
+\end{lstlisting}
+
+\subsubsection{Seleção de destinatário via clique}
+
+O clique em um nome da lista lateral altera o destinatário ativo e atualiza
+o rótulo no rodapé. O botão ``Todos'' volta o destinatário para
+\texttt{null}, reativando o \textit{broadcast}.
+
+\begin{lstlisting}[caption={Listener da lista de usuários}]
+listaUsuarios.addMouseListener(
+  new MouseAdapter() {
+    @Override
+    public void mouseClicked(MouseEvent e) {
+        String sel =
+            listaUsuarios.getSelectedValue();
+        if (sel != null) {
+            destinatario = sel;
+            labelDestinatario.setText(
+                "  Para: " + destinatario + "  ");
+        }
+    }
+});
+\end{lstlisting}
+
+\subsubsection{Thread receptora (\texttt{ReceiverThread})}
+
+A recepção de mensagens é delegada à classe interna \texttt{ReceiverThread},
+que lê objetos do \texttt{ObjectInputStream} em laço contínuo. Quando recebe
+uma \texttt{String} com prefixo \texttt{ONLINE:}, delega a atualização da lista
+para o EDT via \texttt{SwingUtilities.invokeLater}. Quando recebe um objeto
+\texttt{Mensagem}, adiciona o texto à área de chat.
+
+\begin{lstlisting}[caption={Loop principal do ReceiverThread}]
+while (true) {
+    Object obj = in.readObject();
+    if (obj instanceof String) {
+        String str = (String) obj;
+        if (str.startsWith("ONLINE:")) {
+            synchronized (ReceiverThread.class) {
+                listaUsuarios = str.substring(7);
+            }
+            SwingUtilities.invokeLater(() ->
+                client.atualizarListaUsuarios(
+                    getListaUsuarios()));
+        }
+    } else if (obj instanceof Mensagem) {
+        Mensagem msg = (Mensagem) obj;
+        if (msg.getRemetente().equals("SERVIDOR")
+         && msg.getConteudo()
+               .contains("Nome ja esta em uso")) {
+            client.reconectarComNovoNome();
+            break;
+        }
+        SwingUtilities.invokeLater(() ->
+            areaChat.append(msg + "\n"));
+    }
+}
+\end{lstlisting}
+
+\subsection{Comandos Suportados}
+
+\begin{itemize}
+    \item \texttt{/usuarios} — solicita ao servidor a lista de clientes
+          conectados;
+    \item \texttt{/privado :<usuário> :<mensagem>} — envia mensagem privada
+          via linha de comando;
+    \item Clique na lista lateral — seleciona destinatário privado diretamente
+          pela interface gráfica.
+\end{itemize}
+
+% ------------------------------------------------
+
+\section{Aspectos de Concorrência}
+
+A concorrência é tratada em dois níveis:
+
+\textbf{No servidor,} cada cliente é atendido por uma \textit{thread}
+independente (\texttt{ClientHandler}). A estrutura
+\texttt{CopyOnWriteArrayList} permite iteração segura sobre a lista de clientes
+durante operações de \textit{broadcast}, sem bloqueios explícitos.
+
+\textbf{No cliente,} a \texttt{ReceiverThread} opera independentemente da
+\textit{thread} da interface gráfica (EDT). O acesso à variável estática
+\texttt{listaUsuarios} dentro de \texttt{ReceiverThread} é protegido por bloco
+\texttt{synchronized}, evitando condições de corrida.
+
+A ordem de inicialização dos \textit{streams} — \texttt{ObjectOutputStream}
+antes de \texttt{ObjectInputStream} — é respeitada em ambos os lados da
+conexão, prevenindo \textit{deadlock} durante o \textit{handshake} inicial.
+
+% ------------------------------------------------
+
+\section{Tratamento de Erros}
+
+A aplicação trata os seguintes cenários de falha:
+
+\begin{itemize}
+    \item \textbf{Desconexão de cliente:} a exceção de I/O capturada no laço do
+          \texttt{ClientHandler} aciona \texttt{fecharConexao()}, que remove o
+          cliente da lista, notifica os demais e atualiza a lista online;
+    \item \textbf{Destinatário inexistente:} o servidor notifica o remetente
+          com mensagem de aviso;
+    \item \textbf{Comando mal formatado:} o cliente exibe mensagem de uso
+          correto na área de chat sem encerrar a aplicação;
+    \item \textbf{Falha de conexão no cliente:} exibição de diálogo de erro
+          via \texttt{JOptionPane}.
+\end{itemize}
+
+Todos os blocos \texttt{catch} utilizam \textit{multi-catch} onde aplicável
+(\texttt{IOException | ClassNotFoundException}), e blocos \texttt{finally}
+garantem o registro de mensagens de diagnóstico no console.
+
+% ------------------------------------------------
+
+\section{Instruções de Execução}
+
+\subsection{Compilação}
+
+O projeto deve ser compilado a partir do diretório pai da pasta \texttt{chat/}:
+
+\begin{verbatim}
+javac chat/*.java
+\end{verbatim}
+
+\subsection{Execução}
+
+\begin{verbatim}
+# Iniciar o servidor
+java chat.Server
+
+# Iniciar um cliente (em outro terminal)
+java chat.Client
+\end{verbatim}
+
+Ao iniciar o cliente, uma janela de configuração permite definir o nome de
+usuário e o endereço do servidor. Múltiplas instâncias do cliente podem ser
+abertas simultaneamente.
+
+% ------------------------------------------------
+
+\section{Dificuldades Encontradas}
+\label{sec:dificuldades}
+
+\begin{itemize}
+    \item \textbf{Deadlock na inicialização dos streams:} o Java bloqueia na
+          criação do \texttt{ObjectInputStream} até receber o cabeçalho do
+          \texttt{ObjectOutputStream} do lado oposto. A solução foi garantir
+          que o \texttt{ObjectOutputStream} seja sempre criado e descarregado
+          (\texttt{flush()}) antes do \texttt{ObjectInputStream} em ambos os
+          lados.
+
+    \item \textbf{Atualização da interface a partir de threads:} chamadas
+          diretas a componentes Swing fora do EDT causam comportamentos
+          imprevisíveis. O uso de \texttt{SwingUtilities.invokeLater} resolveu
+          o problema de forma consistente.
+
+    \item \textbf{Sincronização da lista de usuários:} o cache estático em
+          \texttt{ReceiverThread} precisou de bloco \texttt{synchronized} para
+          evitar leituras inconsistentes entre a thread receptora e o EDT.
+\end{itemize}
+
+
+\section{Resultados}
+
+\subsection{Comportamento da Interface Gráfica}
+
+A interface gráfica mostrou-se responsiva em todos os testes. A lista de
+usuários online foi atualizada automaticamente a cada entrada ou saída de
+cliente, sem atrasos perceptíveis. O rótulo de destinatário no rodapé manteve
+o estado correto mesmo após a saída de um usuário selecionado — o sistema
+voltou automaticamente ao modo \textit{broadcast}.
+
+\subsection{Consistência das Mensagens}
+
+As mensagens foram entregues na ordem correta em todos os testes. O carimbo
+de data/hora refletiu com precisão o instante de criação de cada objeto
+\texttt{Mensagem} no cliente remetente. Em mensagens privadas, a entrega foi
+confirmada tanto no remetente quanto no destinatário, sem vazamento para outros
+clientes conectados.
+
+% ------------------------------------------------
+
+\section{Discussão}
+
+\subsection{Decisões de Arquitetura}
+
+A escolha da \texttt{CopyOnWriteArrayList} para armazenar os
+\texttt{ClientHandler} no servidor simplificou o código ao eliminar blocos
+\texttt{synchronized} explícitos nas operações de \textit{broadcast}.
+O custo de cópia interna da estrutura a cada escrita é aceitável dado que
+adições e remoções ocorrem raramente (apenas em conexões e desconexões),
+enquanto iterações de leitura são frequentes a cada mensagem enviada.
+
+\subsection{Escalabilidade}
+
+O modelo de uma \textit{thread} por cliente é simples e eficaz para cenários
+com dezenas de usuários simultâneos. Para escalas maiores (centenas ou
+milhares de conexões), a abordagem com \texttt{NIO} (Non-blocking I/O) e um
+pool de \textit{threads} seria mais adequada, pois reduziria o overhead de
+criação e chaveamento de \textit{threads}.
+
+\subsection{Segurança e Robustez}
+
+A aplicação não implementa criptografia: as mensagens trafegam em texto claro
+pelo socket TCP. Para uso em redes não confiáveis, seria necessário adotar
+\texttt{SSLSocket} em substituição ao \texttt{Socket} padrão. A validação de
+nomes se limita à verificação de duplicidade e nome vazio, não restringindo o uso
+caracteres especiais.
+
+\subsection{Experiência de Uso}
+
+O diálogo de configuração inicial elimina a necessidade de editar código-fonte
+para alterar o IP do servidor, tornando a aplicação portável para uso em
+laboratório. A seleção de destinatário por clique é mais fluida do que o
+uso do comando textual \texttt{/privado}, demonstrando a vantagem da abordagem
+híbrida (GUI + comandos) adotada.
+
+% ------------------------------------------------
+
+\section{Conclusão}
+
+Este trabalho demonstrou a viabilidade de construir um sistema de chat
+multiusuário em tempo real utilizando exclusivamente recursos nativos do Java:
+\textit{sockets} TCP, serialização de objetos, \textit{threads} e a biblioteca
+Swing para a interface gráfica.
+
+Os principais objetivos foram alcançados: múltiplos clientes se comunicam
+simultaneamente, mensagens públicas e privadas são entregues corretamente, a
+lista de usuários online é mantida atualizada de forma automática e as
+desconexões são tratadas sem comprometer os demais participantes.
+
+Os aspectos de concorrência — uso de \texttt{CopyOnWriteArrayList} no servidor
+e separação entre \texttt{ReceiverThread} e o EDT no cliente — provaram-se
+suficientes para garantir estabilidade e ausência de condições de corrida nos
+testes realizados.
+
+Como trabalhos futuros, destacam-se: adoção de \texttt{SSLSocket} para
+criptografia do tráfego, migração para NIO com pool de \textit{threads} para
+suporte a maior escala, persistência do histórico de mensagens em banco de
+dados, e suporte a salas de chat (grupos) com controle de permissões.
+
+% ------------------------------------------------
+
+\begin{thebibliography}{99}
+
+\bibitem{tanenbaum}
+TANENBAUM, A. S.; VAN STEEN, M.
+\textit{Distributed Systems: Principles and Paradigms}. 3. ed.
+Pearson, 2017.
+
+\bibitem{oracle-sockets}
+Oracle Corporation.
+\textit{All About Sockets} -- The Java\texttrademark\ Tutorials.
+Disponível em: \url{https://docs.oracle.com/javase/tutorial/networking/sockets/}.
+Acesso em: 2025.
+
+\bibitem{oracle-swing}
+Oracle Corporation.
+\textit{Creating a GUI With Swing} -- The Java\texttrademark\ Tutorials.
+Disponível em: \url{https://docs.oracle.com/javase/tutorial/uiswing/}.
+Acesso em: 2025.
+
+\bibitem{goetz}
+GOETZ, B. et al.
+\textit{Java Concurrency in Practice}. Addison-Wesley, 2006.
+
+\end{thebibliography}
+
+\end{document}
